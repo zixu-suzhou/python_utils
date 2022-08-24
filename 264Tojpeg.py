@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: UTF-8 -*-
 import paramiko
 import os
@@ -38,13 +38,13 @@ def main(argv):
 
     ssh.connect("10.12.11.222", username="mm", port=22, password="mm")
     ftp = ssh.open_sftp()
-    ftp.put(input_dir+"/front_wide.h264","/home/mm/xulei/H264_To_JPEG/front_wide.h264")
+    ftp.put(input_dir+"./left_front.h264","/home/mm/denny/H264_To_JPEG/left_front.h264")
 
-    dir_command = "cd /home/mm/xulei/H264_To_JPEG"
-    env_command = "export LD_LIBRARY_PATH=/home/mm/xulei/H264_To_JPEG/:$LD_LIBRARY_PATH"
-    demo_command = "./demo front_wide.h264 ./ 2896 1876"
+    dir_command = "cd /home/mm/denny/H264_To_JPEG"
+    env_command = "export LD_LIBRARY_PATH=/home/mm/denny/H264_To_JPEG/:$LD_LIBRARY_PATH"
+    demo_command = "./demo left_front.h264 ./ 1936 1216"
     tar_command = "tar -zcvf test.tar.gz *.jpg"
-    clean_command = "rm -rf *.jpg test.tar.gz front_wide.h264"
+    clean_command = "rm -rf *.jpg test.tar.gz left_front.h264"
 
     command = dir_command+";"+env_command+";"+demo_command+";"+tar_command
     post_command = dir_command +";"+clean_command
@@ -53,7 +53,7 @@ def main(argv):
     print(ssh_stdout.read())
     print(ssh_stderr.read())
 
-    ftp.get("/home/mm/xulei/H264_To_JPEG/test.tar.gz",output_dir+"/test.tar.gz")
+    ftp.get("/home/mm/denny/H264_To_JPEG/test.tar.gz",output_dir+"/test.tar.gz")
 
     ssh_stdin, ssh_stdout, ssh_stderr = ssh.exec_command(post_command)
     print(ssh_stdout.read())
