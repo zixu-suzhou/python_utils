@@ -54,11 +54,14 @@ function Do_JPEG_Encode
 		YUV_File_Fromat="yuv420p"
 		YUV_File_Resolv="2896x1876"
 		if [[ "${YUV_File_Size}" == "8149344" ]]; then
-			YUV_File_Fromat="yuv420p"
+			YUV_File_Fromat="nv12"
 			YUV_File_Resolv="2896x1876"
-		elif [[ "${YUV_File_Size}" == "3131264" ]]; then
+		elif [[ "${YUV_File_Size}" == "3531264" ]]; then
 			YUV_File_Fromat="nv12"
 			YUV_File_Resolv="1936x1216"
+    elif [[ "${YUV_File_Size}" == "3131264" ]]; then
+      YUV_File_Fromat="nv12"
+      YUV_File_Resolv="1936x1216"
 		elif [[ "${YUV_File_Size}" == "1843200" ]]; then
 			YUV_File_Fromat="yuv420p"
 			YUV_File_Resolv="1280x960"

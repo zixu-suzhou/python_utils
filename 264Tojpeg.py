@@ -14,37 +14,51 @@ def sftp_copy(conn,inpath,outpath):
 def main(argv):
     input_dir = ''
     output_dir = ''
+    width = ''
+    height = ''
+    file = ''
     try:
-        opts, args = getopt.getopt(argv,"hi:o:",["idir=","odir="])
-        if len(opts) != 2:
-            print('264Tojpeg.py -i <inputdir> -o <outputdir>')
+        opts, args = getopt.getopt(argv,"hf:i:o:x:y:",["file=", "idir=","odir=", "width=", "height="])
+        if len(opts) != 5:
+            print('264Tojpeg.py -f <file> -i <inputdir> -o <outputdir> -x <width> -y <height>')
             sys.exit()
     except getopt.GetoptError as e:
         print (e)
-        print('264Tojpeg.py -i <inputdir> -o <outputdir>')
+        print('264Tojpeg.py -f <file> -i <inputdir> -o <outputdir> -x <width> -y <height>')
         sys.exit()
     for opt, arg in opts:
         if opt == '-h':
-            print('264Tojpeg.py -i <inputdir> -o <outputdir>')
+            print('264Tojpeg.py -f <file> -i <inputdir> -o <outputdir> -x <width> -y <height>')
             sys.exit()
         elif opt in ("-i", "--idir"):
             input_dir = arg
         elif opt in ("-o", "--odir"):
             output_dir = arg
+        elif opt in ("-x", "--width"):
+            width = arg
+        elif opt in ("-y", "--height"):
+            height = arg
+        elif opt in ("-f", "--file"):
+            file = arg
+
+
+    print('file: ', file)
     print('输入的目录为：', input_dir)
     print('输出的目录为：', output_dir)
+    print('witdh:', width)
+    print('height:', height)
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
     ssh.connect("10.12.11.222", username="mm", port=22, password="mm")
     ftp = ssh.open_sftp()
-    ftp.put(input_dir+"./left_front.h264","/home/mm/denny/H264_To_JPEG/left_front.h264")
+    ftp.put(input_dir+"/"+file , "/home/mm/denny/H264_To_JPEG/"+file)
 
     dir_command = "cd /home/mm/denny/H264_To_JPEG"
     env_command = "export LD_LIBRARY_PATH=/home/mm/denny/H264_To_JPEG/:$LD_LIBRARY_PATH"
-    demo_command = "./demo left_front.h264 ./ 1936 1216"
+    demo_command = "./demo "+file+" ./ " + width + " " + height
     tar_command = "tar -zcvf test.tar.gz *.jpg"
-    clean_command = "rm -rf *.jpg test.tar.gz left_front.h264"
+    clean_command = "rm -rf *.jpg test.tar.gz"+file
 
     command = dir_command+";"+env_command+";"+demo_command+";"+tar_command
     post_command = dir_command +";"+clean_command
