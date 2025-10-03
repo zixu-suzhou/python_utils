@@ -1,85 +1,74 @@
 #!/usr/bin/env python3
-"""
-ROS Bag H.264 Video Extractor
-
-从ROS bag文件中提取H.264视频数据，按话题中的相机名称保存为独立的.h264文件。
-话题格式：/C/Camera/xxx，其中xxx为相机名称。
-消息类型：mtc/CameraImage，数据在imageData字段中。
-"""
+"""Extract H.264 videos from ROS bags using exposure_time for accurate framerate."""
 
 import os
 import sys
+import subprocess
 
 
 def extract_h264_from_bag(bag_path, output_dir=None):
     """
-    从bag文件中提取H.264数据并保存为多个.h264文件
+    Extract H.264 data from bag file and generate MP4 with correct framerate.
 
     Args:
-        bag_path: bag文件的路径
-        output_dir: 输出目录，默认为bag文件所在目录
+        bag_path: Path to bag file
+        output_dir: Output directory (defaults to bag directory)
 
     Returns:
-        dict: 提取的相机及其文件路径字典
+        dict: Camera names to H.264 file paths
     """
     if not os.path.exists(bag_path):
-        print(f"错误: bag文件不存在: {bag_path}")
+        print(f"Error: bag file not found: {bag_path}")
         return {}
 
-    # 设置输出目录
     if output_dir is None:
-        output_dir = os.path.dirname(os.path.abspath(bag_path))
+        bag_abs_path = os.path.abspath(bag_path)
+        output_dir = os.path.dirname(bag_abs_path)
         if not output_dir:
             output_dir = '.'
     else:
         os.makedirs(output_dir, exist_ok=True)
 
-    print(f"正在读取bag文件: {bag_path}")
+    print(f"Reading bag: {bag_path}")
 
-    # 导入rosbag并添加lz4支持
+    # Inject fake roslz4 module for LZ4 support
     try:
         import lz4.frame
 
-        # 创建一个roslz4模块的替代品
         class FakeRosLZ4:
             @staticmethod
             def decompress(data):
                 return lz4.frame.decompress(data)
 
-        # 将fake模块注入到sys.modules（在导入rosbag之前）
         import sys
         sys.modules['roslz4'] = FakeRosLZ4()
-
-        # 现在导入rosbag，它会检测到roslz4并启用lz4支持
         import rosbag
 
-        print(f"已添加LZ4解压支持 (found_lz4={rosbag.bag.found_lz4})")
+        print(f"LZ4 support enabled (found_lz4={rosbag.bag.found_lz4})")
 
     except ImportError as e:
-        print(f"错误: 请安装所需库: {e}")
-        print("安装命令: pip install bagpy lz4")
+        print(f"Error: {e}")
+        print("Install: pip install bagpy lz4")
         return {}
 
-    # 打开bag文件
     try:
         bag = rosbag.Bag(bag_path, 'r', chunk_threshold=256*1024*1024, allow_unindexed=True)
     except Exception as e:
-        print(f"错误: 无法打开bag文件: {e}")
+        print(f"Error opening bag: {e}")
         import traceback
         traceback.print_exc()
         return {}
 
-    # 获取所有话题
     try:
         info = bag.get_type_and_topic_info()
         all_topics = info[1].keys()
-        print(f"\n总共发现 {len(all_topics)} 个话题")
+        print(f"\nFound {len(all_topics)} topics")
     except Exception as e:
-        print(f"错误: 无法读取话题信息: {e}")
+        print(f"Error reading topics: {e}")
         bag.close()
         return {}
 
-    # 查找相机话题
+    # Find camera topics matching /C/Camera/*
     camera_topics = {}
     for topic in all_topics:
         if topic.startswith('/C/Camera/'):
@@ -87,41 +76,37 @@ def extract_h264_from_bag(bag_path, output_dir=None):
             camera_topics[topic] = camera_name
 
     if not camera_topics:
-        print("警告: 未找到符合格式 /C/Camera/xxx 的话题")
+        print("Warning: No /C/Camera/* topics found")
         bag.close()
         return {}
 
-    print(f"\n找到 {len(camera_topics)} 个相机话题:")
+    print(f"\nFound {len(camera_topics)} camera topics:")
     for topic, camera_name in camera_topics.items():
         print(f"  - {topic} -> {camera_name}")
 
-    # 创建输出文件
     output_files = {}
     file_handles = {}
     message_counts = {}
+    timestamps = {}
 
     for topic, camera_name in camera_topics.items():
         output_file = os.path.join(output_dir, f"{camera_name}.h264")
         output_files[camera_name] = output_file
         file_handles[topic] = open(output_file, 'wb')
         message_counts[camera_name] = 0
-        print(f"创建输出文件: {output_file}")
+        timestamps[camera_name] = []
+        print(f"Output: {output_file}")
 
-    # 读取消息并提取数据
-    print("\n正在提取H.264数据...")
+    print("\nExtracting H.264 data...")
 
     try:
-        for topic, msg, t in bag.read_messages(topics=list(camera_topics.keys())):
+        for topic, msg, _ in bag.read_messages(topics=list(camera_topics.keys())):
             camera_name = camera_topics[topic]
 
-            # mtc/CameraImage消息，数据在imageData字段中
             data = None
-
             if hasattr(msg, 'imageData'):
-                # mtc/CameraImage.imageData字段
                 data = bytes(msg.imageData)
             elif hasattr(msg, 'data'):
-                # 其他可能的格式
                 data = bytes(msg.data)
             elif hasattr(msg, 'image') and hasattr(msg.image, 'data'):
                 data = bytes(msg.image.data)
@@ -130,36 +115,73 @@ def extract_h264_from_bag(bag_path, output_dir=None):
                 file_handles[topic].write(data)
                 message_counts[camera_name] += 1
 
+                if hasattr(msg, 'exposure_time_s') and hasattr(msg, 'exposure_time_ns'):
+                    timestamp = msg.exposure_time_s + msg.exposure_time_ns / 1e9
+                    timestamps[camera_name].append(timestamp)
+
                 if message_counts[camera_name] % 100 == 0:
-                    print(f"  {camera_name}: {message_counts[camera_name]} 帧", end='\r')
+                    print(f"  {camera_name}: {message_counts[camera_name]} frames", end='\r')
 
     except Exception as e:
-        print(f"\n错误: 读取消息时出错: {e}")
+        print(f"\nError reading messages: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        # 关闭所有文件
         for fh in file_handles.values():
             fh.close()
         bag.close()
 
-    print("\n\n提取完成:")
+    print("\n\nExtraction complete:")
     for camera_name in camera_topics.values():
         if camera_name in output_files:
             output_file = output_files[camera_name]
             if os.path.exists(output_file):
                 file_size = os.path.getsize(output_file)
                 count = message_counts.get(camera_name, 0)
-                print(f"  - {camera_name}: {count} 帧, 文件大小: {file_size / 1024 / 1024:.2f} MB")
+                print(f"  - {camera_name}: {count} frames, {file_size / 1024 / 1024:.2f} MB")
+
+    # Generate MP4 with correct framerate from exposure_time
+    print("\nGenerating MP4 files with correct framerate...")
+    for camera_name in camera_topics.values():
+        if camera_name in output_files and timestamps.get(camera_name):
+            h264_file = output_files[camera_name]
+            mp4_file = h264_file.replace('.h264', '.mp4')
+
+            ts_list = timestamps[camera_name]
+            if len(ts_list) > 1:
+                time_diffs = [ts_list[i+1] - ts_list[i] for i in range(len(ts_list)-1)]
+                avg_interval = sum(time_diffs) / len(time_diffs)
+                actual_fps = 1.0 / avg_interval if avg_interval > 0 else 20.0
+
+                print(f"\n  {camera_name}:")
+                print(f"    FPS: {actual_fps:.2f} Hz")
+                print(f"    Avg interval: {avg_interval*1000:.2f} ms")
+
+                try:
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-r', str(actual_fps),
+                        '-i', h264_file,
+                        '-c:v', 'copy',
+                        '-r', str(actual_fps),
+                        mp4_file
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print(f"    ✓ MP4: {mp4_file}")
+                    else:
+                        print(f"    ✗ ffmpeg failed: {result.stderr[:200]}")
+                except Exception as e:
+                    print(f"    ✗ Error: {e}")
 
     return output_files
 
 
 def main():
-    """命令行主函数"""
+    """CLI entrypoint."""
     if len(sys.argv) < 2:
-        print("用法: python bag_helper.py <bag_file_path> [output_directory]")
-        print("\n示例:")
+        print("Usage: python bag_helper.py <bag_file_path> [output_directory]")
+        print("\nExamples:")
         print("  python bag_helper.py data.bag")
         print("  python bag_helper.py data.bag ./output")
         sys.exit(1)
@@ -170,11 +192,11 @@ def main():
     output_files = extract_h264_from_bag(bag_path, output_dir)
 
     if output_files:
-        print("\n成功提取H.264文件:")
+        print("\nSuccess:")
         for camera_name, file_path in output_files.items():
             print(f"  {camera_name}: {file_path}")
     else:
-        print("\n未能提取任何H.264文件")
+        print("\nFailed to extract H.264 files")
         sys.exit(1)
 
 
