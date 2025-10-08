@@ -46,31 +46,39 @@ def extract_h264_from_bag(bag_path, output_dir=None):
         # Monkey-patch genpy.dynamic for Windows compatibility
         import genpy.dynamic
         import tempfile
+        import builtins
 
         _original_generate = genpy.dynamic.generate_dynamic
+        _original_open = builtins.open
+
+        def _patched_open(file, mode='r', *args, **kwargs):
+            """Patched open that handles /tmp/foo and encoding issues."""
+            # Redirect /tmp/foo to Windows temp directory
+            if file == '/tmp/foo':
+                file = os.path.join(tempfile.gettempdir(), 'genpy_debug.txt')
+
+            # For genpy temp files, use utf-8 encoding and error handling
+            if 'genpy_' in str(file) and 'w' in mode:
+                kwargs.setdefault('encoding', 'utf-8')
+                kwargs.setdefault('errors', 'replace')
+
+            return _original_open(file, mode, *args, **kwargs)
 
         def _patched_generate_dynamic(msg_cat, msg_def):
-            """Windows-compatible version of generate_dynamic."""
+            """Windows-compatible version of generate_dynamic with encoding fix."""
+            # Clean msg_def to remove non-UTF-8 characters
+            if isinstance(msg_def, bytes):
+                msg_def = msg_def.decode('utf-8', errors='replace')
+            elif isinstance(msg_def, str):
+                # Replace non-UTF-8 compatible characters
+                msg_def = msg_def.encode('utf-8', errors='replace').decode('utf-8')
+
+            builtins.open = _patched_open
             try:
-                return _original_generate(msg_cat, msg_def)
-            except (FileNotFoundError, OSError) as e:
-                if '/tmp/foo' in str(e) or 'tmp\\foo' in str(e):
-                    # Monkey-patch the builtins.open to redirect /tmp/foo
-                    import builtins
-                    _original_open = builtins.open
-
-                    def _patched_open(file, *args, **kwargs):
-                        if file == '/tmp/foo':
-                            file = os.path.join(tempfile.gettempdir(), 'genpy_debug.txt')
-                        return _original_open(file, *args, **kwargs)
-
-                    builtins.open = _patched_open
-                    try:
-                        result = _original_generate(msg_cat, msg_def)
-                    finally:
-                        builtins.open = _original_open
-                    return result
-                raise
+                result = _original_generate(msg_cat, msg_def)
+            finally:
+                builtins.open = _original_open
+            return result
 
         genpy.dynamic.generate_dynamic = _patched_generate_dynamic
 
