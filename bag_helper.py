@@ -88,14 +88,20 @@ def extract_h264_from_bag(bag_path, output_dir=None):
     file_handles = {}
     message_counts = {}
     timestamps = {}
+    exposure_time_files = {}
+    frame_data = {}
 
     for topic, camera_name in camera_topics.items():
         output_file = os.path.join(output_dir, f"{camera_name}.h264")
+        exposure_time_file = os.path.join(output_dir, f"{camera_name}_exposure_time.csv")
         output_files[camera_name] = output_file
+        exposure_time_files[camera_name] = exposure_time_file
         file_handles[topic] = open(output_file, 'wb')
         message_counts[camera_name] = 0
         timestamps[camera_name] = []
+        frame_data[camera_name] = []
         print(f"Output: {output_file}")
+        print(f"Exposure time: {exposure_time_file}")
 
     print("\nExtracting H.264 data...")
 
@@ -119,6 +125,14 @@ def extract_h264_from_bag(bag_path, output_dir=None):
                     timestamp = msg.exposure_time_s + msg.exposure_time_ns / 1e9
                     timestamps[camera_name].append(timestamp)
 
+                    # Get frame_id from message
+                    frame_id = msg.frame_id if hasattr(msg, 'frame_id') else None
+
+                    frame_data[camera_name].append({
+                        'frame_id': frame_id,
+                        'timestamp': timestamp
+                    })
+
                 if message_counts[camera_name] % 100 == 0:
                     print(f"  {camera_name}: {message_counts[camera_name]} frames", end='\r')
 
@@ -130,6 +144,19 @@ def extract_h264_from_bag(bag_path, output_dir=None):
         for fh in file_handles.values():
             fh.close()
         bag.close()
+
+    # Save exposure times to CSV files
+    print("\nSaving exposure times...")
+    for camera_name in camera_topics.values():
+        if camera_name in exposure_time_files and frame_data.get(camera_name):
+            exposure_file = exposure_time_files[camera_name]
+            with open(exposure_file, 'w') as f:
+                f.write("frame_id,exposure_timestamp_s\n")
+                for data in frame_data[camera_name]:
+                    frame_id = data['frame_id'] if data['frame_id'] is not None else ''
+                    ts_s = data['timestamp']
+                    f.write(f"{frame_id},{ts_s:.9f}\n")
+            print(f"  - {camera_name}: {len(frame_data[camera_name])} frames saved to CSV")
 
     print("\n\nExtraction complete:")
     for camera_name in camera_topics.values():
