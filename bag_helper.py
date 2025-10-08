@@ -42,6 +42,38 @@ def extract_h264_from_bag(bag_path, output_dir=None):
 
         import sys
         sys.modules['roslz4'] = FakeRosLZ4()
+
+        # Monkey-patch genpy.dynamic for Windows compatibility
+        import genpy.dynamic
+        import tempfile
+
+        _original_generate = genpy.dynamic.generate_dynamic
+
+        def _patched_generate_dynamic(msg_cat, msg_def):
+            """Windows-compatible version of generate_dynamic."""
+            try:
+                return _original_generate(msg_cat, msg_def)
+            except (FileNotFoundError, OSError) as e:
+                if '/tmp/foo' in str(e) or 'tmp\\foo' in str(e):
+                    # Monkey-patch the builtins.open to redirect /tmp/foo
+                    import builtins
+                    _original_open = builtins.open
+
+                    def _patched_open(file, *args, **kwargs):
+                        if file == '/tmp/foo':
+                            file = os.path.join(tempfile.gettempdir(), 'genpy_debug.txt')
+                        return _original_open(file, *args, **kwargs)
+
+                    builtins.open = _patched_open
+                    try:
+                        result = _original_generate(msg_cat, msg_def)
+                    finally:
+                        builtins.open = _original_open
+                    return result
+                raise
+
+        genpy.dynamic.generate_dynamic = _patched_generate_dynamic
+
         import rosbag
 
         print(f"LZ4 support enabled (found_lz4={rosbag.bag.found_lz4})")
