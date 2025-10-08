@@ -46,38 +46,42 @@ def extract_h264_from_bag(bag_path, output_dir=None):
         # Monkey-patch genpy.dynamic for Windows compatibility
         import genpy.dynamic
         import tempfile
-        import builtins
+        import re
 
         _original_generate = genpy.dynamic.generate_dynamic
-        _original_open = builtins.open
-
-        def _patched_open(file, mode='r', *args, **kwargs):
-            """Patched open that handles /tmp/foo and encoding issues."""
-            # Redirect /tmp/foo to Windows temp directory
-            if file == '/tmp/foo':
-                file = os.path.join(tempfile.gettempdir(), 'genpy_debug.txt')
-
-            # For genpy temp files, use utf-8 encoding and error handling
-            if 'genpy_' in str(file) and 'w' in mode:
-                kwargs.setdefault('encoding', 'utf-8')
-                kwargs.setdefault('errors', 'replace')
-
-            return _original_open(file, mode, *args, **kwargs)
 
         def _patched_generate_dynamic(msg_cat, msg_def):
             """Windows-compatible version of generate_dynamic with encoding fix."""
-            # Clean msg_def to remove non-UTF-8 characters
+            # Clean msg_def to remove problematic characters
+            # The issue is that byte 0xa0 (non-breaking space) is not valid UTF-8
             if isinstance(msg_def, bytes):
-                msg_def = msg_def.decode('utf-8', errors='replace')
+                # Replace byte 0xa0 and other problematic bytes
+                msg_def = msg_def.replace(b'\xa0', b' ')  # non-breaking space -> regular space
+                msg_def = msg_def.decode('latin1', errors='replace').encode('utf-8', errors='replace').decode('utf-8')
             elif isinstance(msg_def, str):
-                # Replace non-UTF-8 compatible characters
+                # Clean the string
+                msg_def = msg_def.replace('\xa0', ' ')  # non-breaking space -> regular space
+                # Ensure it's clean UTF-8
                 msg_def = msg_def.encode('utf-8', errors='replace').decode('utf-8')
 
-            builtins.open = _patched_open
             try:
                 result = _original_generate(msg_cat, msg_def)
-            finally:
-                builtins.open = _original_open
+            except (FileNotFoundError, OSError) as e:
+                # Handle /tmp/foo issue on Windows
+                if '/tmp/foo' in str(e):
+                    import builtins
+                    _orig_open = builtins.open
+                    def _temp_open(f, *args, **kwargs):
+                        if f == '/tmp/foo':
+                            f = os.path.join(tempfile.gettempdir(), 'genpy_debug.txt')
+                        return _orig_open(f, *args, **kwargs)
+                    builtins.open = _temp_open
+                    try:
+                        result = _original_generate(msg_cat, msg_def)
+                    finally:
+                        builtins.open = _orig_open
+                else:
+                    raise
             return result
 
         genpy.dynamic.generate_dynamic = _patched_generate_dynamic
