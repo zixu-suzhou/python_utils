@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""DLT Log Reader - Parse and filter DLT log files.
+
+This script reads DLT log files from data/dlt/ directory, filters messages
+by CTID=CMSV, sorts them by timestamp, and saves the output to a text file.
+"""
+
+import sys
+from pathlib import Path
+
+# Add system DLT package path for conda environments
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
+
+from dlt.dlt import cDLTFile
+
+
+def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
+    """Read all DLT files and filter by CTID.
+    
+    Args:
+        dlt_dir: Directory containing DLT files (Path or str)
+        ctid_filter: Context ID to filter (default: "CMSV")
+        
+    Returns:
+        List of tuples (timestamp, message_string)
+    """
+    dlt_dir_path = Path(dlt_dir)
+    dlt_files = list(dlt_dir_path.glob("*.dlt"))
+    
+    if not dlt_files:
+        print(f"No DLT files found in {dlt_dir}")
+        return []
+    
+    print(f"Found {len(dlt_files)} DLT file(s)")
+    
+    all_messages = []
+    
+    for dlt_file_path in dlt_files:
+        print(f"Processing: {dlt_file_path}")
+        
+        # Create DLT file reader with filter
+        dlt_file = cDLTFile()
+        # Format: (APID, CTID) - Empty APID matches any application ID
+        filters = [("", ctid_filter)]
+        
+        success = dlt_file.read(str(dlt_file_path), filters=filters)
+        
+        if not success:
+            print(f"  Failed to read file: {dlt_file_path}")
+            continue
+        
+        print(f"  Total messages: {dlt_file.counter_total}")
+        print(f"  Filtered messages (CTID={ctid_filter}): {dlt_file.counter}")
+        
+        # Extract messages
+        skipped_count = 0
+        for msg in dlt_file:
+            timestamp = msg.storage_timestamp
+            if timestamp is None:
+                # Skip messages with invalid timestamps
+                skipped_count += 1
+                continue
+            message_str = str(msg)  # Use DLT's string representation
+            all_messages.append((timestamp, message_str))
+        
+        if skipped_count > 0:
+            print(f"  Skipped {skipped_count} message(s) with invalid timestamps")
+    
+    return all_messages
+
+
+def save_to_file(messages, output_file):
+    """Save sorted messages to a text file.
+    
+    Args:
+        messages: List of tuples (timestamp, message_string)
+        output_file: Output file path (Path or str)
+    """
+    # Sort by timestamp
+    sorted_messages = sorted(messages, key=lambda x: x[0])
+    
+    # Create output directory if it doesn't exist
+    output_path = Path(output_file)
+    if not output_path.parent.exists():
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Created output directory: {output_path.parent}")
+    
+    # Write to file
+    output_path.write_text(
+        '\n'.join(message for _, message in sorted_messages) + '\n',
+        encoding='utf-8'
+    )
+    
+    print(f"Saved {len(sorted_messages)} messages to: {output_path}")
+
+
+def main():
+    """Main function to parse DLT logs and save filtered output."""
+    # Set up paths
+    script_dir = Path(__file__).parent
+    dlt_dir = script_dir / "data" / "dlt"
+    output_dir = script_dir / "data" / "output"
+    output_file = output_dir / "filtered_logs_CMSV.txt"
+    
+    print("DLT Log Reader")
+    print("=" * 60)
+    print(f"Input directory: {dlt_dir}")
+    print(f"Output file: {output_file}")
+    print(f"Filter: CTID=CMSV")
+    print("=" * 60)
+    
+    # Read and filter DLT files
+    messages = read_dlt_files(dlt_dir, ctid_filter="CMSV")
+    
+    if not messages:
+        print("No messages found matching the filter criteria.")
+        return
+    
+    # Save to output file
+    save_to_file(messages, output_file)
+    
+    print("=" * 60)
+    print("Processing complete!")
+
+
+if __name__ == "__main__":
+    main()
