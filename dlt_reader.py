@@ -5,7 +5,6 @@ This script reads DLT log files from data/dlt/ directory, filters messages
 by CTID=CMSV, sorts them by timestamp, and saves the output to a text file.
 """
 
-import os
 from pathlib import Path
 from dlt.dlt import cDLTFile
 
@@ -14,13 +13,14 @@ def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
     """Read all DLT files and filter by CTID.
     
     Args:
-        dlt_dir: Directory containing DLT files
+        dlt_dir: Directory containing DLT files (Path or str)
         ctid_filter: Context ID to filter (default: "CMSV")
         
     Returns:
         List of tuples (timestamp, message_string)
     """
-    dlt_files = list(Path(dlt_dir).glob("*.dlt"))
+    dlt_dir_path = Path(dlt_dir)
+    dlt_files = list(dlt_dir_path.glob("*.dlt"))
     
     if not dlt_files:
         print(f"No DLT files found in {dlt_dir}")
@@ -63,23 +63,24 @@ def save_to_file(messages, output_file):
     
     Args:
         messages: List of tuples (timestamp, message_string)
-        output_file: Output file path
+        output_file: Output file path (Path or str)
     """
     # Sort by timestamp
     sorted_messages = sorted(messages, key=lambda x: x[0])
     
     # Create output directory if it doesn't exist
-    output_dir = os.path.dirname(output_file)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created output directory: {output_dir}")
+    output_path = Path(output_file)
+    if not output_path.parent.exists():
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Created output directory: {output_path.parent}")
     
     # Write to file
-    with open(output_file, 'w', encoding='utf-8') as f:
-        for timestamp, message in sorted_messages:
-            f.write(message + '\n')
+    output_path.write_text(
+        '\n'.join(message for _, message in sorted_messages) + '\n',
+        encoding='utf-8'
+    )
     
-    print(f"Saved {len(sorted_messages)} messages to: {output_file}")
+    print(f"Saved {len(sorted_messages)} messages to: {output_path}")
 
 
 def main():
@@ -98,14 +99,14 @@ def main():
     print("=" * 60)
     
     # Read and filter DLT files
-    messages = read_dlt_files(str(dlt_dir), ctid_filter="CMSV")
+    messages = read_dlt_files(dlt_dir, ctid_filter="CMSV")
     
     if not messages:
         print("No messages found matching the filter criteria.")
         return
     
     # Save to output file
-    save_to_file(messages, str(output_file))
+    save_to_file(messages, output_file)
     
     print("=" * 60)
     print("Processing complete!")
