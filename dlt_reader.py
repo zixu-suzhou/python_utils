@@ -35,7 +35,8 @@ def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
         
         # Create DLT file reader with filter
         dlt_file = cDLTFile()
-        filters = [("", ctid_filter)]  # Empty APID means any APID
+        # Format: (APID, CTID) - Empty APID matches any application ID
+        filters = [("", ctid_filter)]
         
         success = dlt_file.read(str(dlt_file_path), filters=filters)
         
@@ -47,13 +48,18 @@ def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
         print(f"  Filtered messages (CTID={ctid_filter}): {dlt_file.counter}")
         
         # Extract messages
+        skipped_count = 0
         for msg in dlt_file:
             timestamp = msg.storage_timestamp
             if timestamp is None:
                 # Skip messages with invalid timestamps
+                skipped_count += 1
                 continue
             message_str = str(msg)  # Use DLT's string representation
             all_messages.append((timestamp, message_str))
+        
+        if skipped_count > 0:
+            print(f"  Skipped {skipped_count} message(s) with invalid timestamps")
     
     return all_messages
 
