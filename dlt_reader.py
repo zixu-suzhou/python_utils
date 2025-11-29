@@ -6,9 +6,8 @@ by CTID=CMSV, sorts them by timestamp, and saves the output to a text file.
 """
 
 import os
-import glob
 from pathlib import Path
-from dlt.dlt import cDLTFile, DLTMessage
+from dlt.dlt import cDLTFile
 
 
 def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
@@ -21,7 +20,7 @@ def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
     Returns:
         List of tuples (timestamp, message_string)
     """
-    dlt_files = glob.glob(os.path.join(dlt_dir, "*.dlt"))
+    dlt_files = list(Path(dlt_dir).glob("*.dlt"))
     
     if not dlt_files:
         print(f"No DLT files found in {dlt_dir}")
@@ -38,7 +37,7 @@ def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
         dlt_file = cDLTFile()
         filters = [("", ctid_filter)]  # Empty APID means any APID
         
-        success = dlt_file.read(dlt_file_path, filters=filters)
+        success = dlt_file.read(str(dlt_file_path), filters=filters)
         
         if not success:
             print(f"  Failed to read file: {dlt_file_path}")
@@ -50,6 +49,9 @@ def read_dlt_files(dlt_dir, ctid_filter="CMSV"):
         # Extract messages
         for msg in dlt_file:
             timestamp = msg.storage_timestamp
+            if timestamp is None:
+                # Skip messages with invalid timestamps
+                continue
             message_str = str(msg)  # Use DLT's string representation
             all_messages.append((timestamp, message_str))
     
