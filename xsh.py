@@ -67,7 +67,11 @@ def _build_proxy_command(jump: JumpInfo, jump_tmp: Optional[str]) -> str:
     inner = []
     if jump_tmp:
         inner += ["sshpass", "-f", jump_tmp]
-    inner += ["ssh", "-W", "%h:%p"]
+    inner += [
+        "ssh", "-W", "%h:%p",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+    ]
     if jump.port != 22:
         inner += ["-p", str(jump.port)]
     inner.append(f"{jump.user}@{jump.host}")
@@ -95,7 +99,11 @@ def _exec_ssh(info: ServerInfo, ssh_flags: List[str], remote_cmd: List[str]):
 
         if info.jump:
             proxy = _build_proxy_command(info.jump, jump_tmp)
-            cmd += ["-o", f"ProxyCommand={proxy}"]
+            cmd += [
+                "-o", f"ProxyCommand={proxy}",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+            ]
 
         if info.port != 22:
             cmd += ["-p", str(info.port)]

@@ -50,7 +50,9 @@ def _make_jump_server(target_password=None, jump_password=None):
 def test_build_proxy_command_no_jump_password():
     jump = JumpInfo(host="10.0.0.2", user="jumper")
     result = _build_proxy_command(jump, jump_tmp=None)
-    assert result == "ssh -W %h:%p jumper@10.0.0.2"
+    assert "ssh -W %h:%p" in result
+    assert "StrictHostKeyChecking=no" in result
+    assert "jumper@10.0.0.2" in result
 
 
 def test_build_proxy_command_with_jump_password():

@@ -1,0 +1,34 @@
+# xsh/xcp server configuration
+
+jumphosts:
+  jmp1:
+    host: 10.190.161.169
+    user: env1szh
+    password: "ENGVV202410$"
+    port: 22          # optional, default 22
+
+  jmp2:
+    host: 10.178.237.242
+    user: env1szh
+    password: "ENGVV202410$"
+    port: 22
+
+
+servers:
+  zeekr:
+    host: 198.18.36.1
+    user: root
+    password: ""
+    jump: jmp1
+
+  lynk:
+    host: 10.43.0.28
+    user: root
+    password: ""
+    jump: jmp2
+
+
+  bench01:
+    host: 10.178.235.54
+    user: root
+    port: 22

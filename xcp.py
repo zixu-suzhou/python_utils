@@ -76,7 +76,11 @@ def _exec_scp(server_map, scp_flags, argv):
 
         if info.jump:
             proxy = _build_proxy_command(info.jump, jump_tmp)
-            cmd += ["-o", f"ProxyCommand={proxy}"]
+            cmd += [
+                "-o", f"ProxyCommand={proxy}",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+            ]
 
         if info.port != 22:
             cmd += ["-P", str(info.port)]
