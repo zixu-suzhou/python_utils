@@ -50,6 +50,21 @@ def parse_xcp_args(
     return scp_flags, local_tokens, remote_tokens
 
 
+def _extract_positional(argv: List[str]) -> List[str]:
+    """Extract positional (non-flag) tokens from argv, preserving their original order."""
+    positional = []
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token.startswith("-"):
+            if token in _SCP_OPTION_FLAGS and i + 1 < len(argv):
+                i += 1  # skip the option's value argument
+        else:
+            positional.append(token)
+        i += 1
+    return positional
+
+
 def _exec_scp(server_map, scp_flags, argv):
     """Build and exec the scp command with rewrites for known servers."""
     # Pick any server for the connection params (upload or download, one jump config)
@@ -132,8 +147,9 @@ def main():
             return
         server_map[server_name] = info
 
-    # Pass positional tokens (local + remote originals) to _exec_scp for rewriting
-    positional_argv = local_tokens + [orig for _, _, orig in remote_tokens]
+    # Preserve original positional argument order so that downloads (remote first,
+    # local last) are not silently reversed into uploads.
+    positional_argv = _extract_positional(sys.argv[1:])
     _exec_scp(server_map, scp_flags, positional_argv)
 
 

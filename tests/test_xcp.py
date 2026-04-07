@@ -1,7 +1,7 @@
 # tests/test_xcp.py
 import pytest
 from unittest.mock import patch, MagicMock
-from xcp import is_remote_token, parse_xcp_args, _exec_scp
+from xcp import is_remote_token, parse_xcp_args, _exec_scp, _extract_positional
 from xsh_config import ServerInfo, JumpInfo
 
 
@@ -96,3 +96,57 @@ def test_exec_scp_jump_both_passwords():
         proxy_val = cmd[cmd.index("-o") + 1]
         assert "sshpass" in proxy_val
         assert "sshpass" in cmd[0]
+
+
+# --- _extract_positional ---
+
+def test_extract_positional_preserves_order_download():
+    # remote token comes first, local last — order must be preserved
+    result = _extract_positional(["zeekr:/data/file.txt", "./"])
+    assert result == ["zeekr:/data/file.txt", "./"]
+
+def test_extract_positional_preserves_order_upload():
+    result = _extract_positional(["file.txt", "bench01:/tmp/"])
+    assert result == ["file.txt", "bench01:/tmp/"]
+
+def test_extract_positional_skips_flags_and_their_values():
+    # -P consumes its value; -r is a boolean flag
+    result = _extract_positional(["-r", "-P", "2222", "zeekr:/src/", "./dst/"])
+    assert result == ["zeekr:/src/", "./dst/"]
+
+def test_extract_positional_flag_only():
+    result = _extract_positional(["-r", "-v"])
+    assert result == []
+
+def test_extract_positional_flag_between_positionals():
+    # Flags interspersed between positional args must not affect positional order
+    result = _extract_positional(["file.txt", "-P", "2222", "bench01:/tmp/"])
+    assert result == ["file.txt", "bench01:/tmp/"]
+
+
+# --- download ordering in _exec_scp ---
+
+def test_exec_scp_download_order_preserved():
+    """Remote token first → stays first in scp cmd (download, not upload)."""
+    server_map = {"zeekr": _direct_server()}
+    with patch("os.execvp") as mock_exec:
+        _exec_scp(server_map, [], ["zeekr:/data/file.txt", "./"])
+        cmd = mock_exec.call_args[0][1]
+        remote_idx = cmd.index("root@10.0.0.1:/data/file.txt")
+        local_idx = cmd.index("./")
+        assert remote_idx < local_idx, "remote source must precede local dest for a download"
+
+
+def test_exec_scp_recursive_download():
+    """xcp -r zeekr:/data/dir ./ — recursive flag forwarded and order correct."""
+    server_map = {"zeekr": _direct_server(password="pw")}
+    with patch("subprocess.run") as mock_run, \
+         patch("sys.exit"), \
+         patch("xcp._check_sshpass"):
+        mock_run.return_value = MagicMock(returncode=0)
+        _exec_scp(server_map, ["-r"], ["zeekr:/data/dir", "./"])
+        cmd = mock_run.call_args[0][0]
+        assert "-r" in cmd
+        remote_idx = cmd.index("root@10.0.0.1:/data/dir")
+        local_idx = cmd.index("./")
+        assert remote_idx < local_idx, "remote source must precede local dest for a recursive download"
