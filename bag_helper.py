@@ -5,6 +5,8 @@ import os
 import sys
 import subprocess
 import argparse
+import io
+import time
 
 
 # Constants for optimization
@@ -72,6 +74,7 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
         os.makedirs(output_dir, exist_ok=True)
 
     print(f"Reading bag: {bag_path}")
+    start_time = time.time()
 
     # Inject fake roslz4 module for LZ4 support
     try:
@@ -271,8 +274,8 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
 
                 # Write to disk in batches
                 if len(write_buffers[camera_name]) >= BATCH_WRITE_SIZE:
-                    for buffered_data in write_buffers[camera_name]:
-                        file_handles[topic].write(buffered_data)
+                    # Use b''.join() for efficient concatenation and single write
+                    file_handles[topic].write(b''.join(write_buffers[camera_name]))
                     write_buffers[camera_name].clear()
 
                 if message_counts[camera_name] % 100 == 0:
@@ -291,8 +294,8 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
                         topic_for_camera = topic
                         break
                 if topic_for_camera and topic_for_camera in file_handles:
-                    for buffered_data in write_buffers[camera_name]:
-                        file_handles[topic_for_camera].write(buffered_data)
+                    # Use b''.join() for efficient concatenation and single write
+                    file_handles[topic_for_camera].write(b''.join(write_buffers[camera_name]))
                     write_buffers[camera_name].clear()
 
     except Exception as e:
@@ -455,6 +458,8 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
                 traceback.print_exc()
 
     print("\n\nExtraction complete:")
+    elapsed_time = time.time() - start_time
+    print(f"Total time: {elapsed_time:.2f}s")
     for camera_name in camera_topics.values():
         if camera_name in output_files:
             output_path = output_files[camera_name]
