@@ -5,6 +5,13 @@ import os
 import sys
 import subprocess
 import argparse
+import io
+import time
+
+
+# Constants for optimization
+BATCH_WRITE_SIZE = 50  # Write to disk every N frames for better performance
+DEFAULT_BUFFER_SIZE = 10 * 1024 * 1024  # 10MB write buffer
 
 
 def sample_frames_by_hz(timestamps, sample_hz):
@@ -39,7 +46,7 @@ def sample_frames_by_hz(timestamps, sample_hz):
     return sampled_indices
 
 
-def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_format='h264', sample_hz=1.0):
+def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_format='h264', sample_hz=1.0, buffer_size=DEFAULT_BUFFER_SIZE):
     """
     Extract H.264/YUV data from bag file and generate outputs with correct framerate.
 
@@ -49,6 +56,7 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
         camera_names: List of camera names to process (None = process all)
         output_format: Output format - 'h264', 'mp4', or 'yuv'
         sample_hz: Sampling rate in Hz for YUV output (frames per second)
+        buffer_size: Write buffer size in bytes (default: 10MB for better I/O performance)
 
     Returns:
         dict: Camera names to output file paths
@@ -66,6 +74,7 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
         os.makedirs(output_dir, exist_ok=True)
 
     print(f"Reading bag: {bag_path}")
+    start_time = time.time()
 
     # Inject fake roslz4 module for LZ4 support
     try:
@@ -144,8 +153,9 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
         return {}
 
     try:
+        # Use larger chunk threshold for faster reading (512MB instead of 256MB)
         bag = rosbag.Bag(
-            bag_path, "r", chunk_threshold=256 * 1024 * 1024, allow_unindexed=True
+            bag_path, "r", chunk_threshold=512 * 1024 * 1024, allow_unindexed=True
         )
     except Exception as e:
         print(f"Error opening bag: {e}")
@@ -191,6 +201,7 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
     exposure_time_files = {}
     frame_data = {}
     temp_h264_files = {}  # For YUV conversion
+    write_buffers = {}  # Write buffers for batched writes
 
     # For YUV output, create subdirectories and temp H.264 files
     if output_format == 'yuv':
@@ -202,11 +213,12 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
             # Temporary H.264 file for decoding
             temp_h264 = os.path.join(output_dir, f"{camera_name}_temp.h264")
             temp_h264_files[camera_name] = temp_h264
-            file_handles[topic] = open(temp_h264, "wb")
+            file_handles[topic] = open(temp_h264, "wb", buffering=buffer_size)
 
             message_counts[camera_name] = 0
             timestamps[camera_name] = []
             frame_data[camera_name] = []
+            write_buffers[camera_name] = []  # Initialize write buffer
             print(f"Output directory: {camera_output_dir}")
     else:
         # For H.264/MP4 output
@@ -217,10 +229,11 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
             )
             output_files[camera_name] = output_file
             exposure_time_files[camera_name] = exposure_time_file
-            file_handles[topic] = open(output_file, "wb")
+            file_handles[topic] = open(output_file, "wb", buffering=buffer_size)
             message_counts[camera_name] = 0
             timestamps[camera_name] = []
             frame_data[camera_name] = []
+            write_buffers[camera_name] = []  # Initialize write buffer
             print(f"Output: {output_file}")
             print(f"Exposure time: {exposure_time_file}")
 
@@ -255,15 +268,35 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
                         {"frame_id": frame_id, "timestamp": timestamp}
                     )
 
-                # Write H.264 data to file (for both YUV and H.264/MP4 modes)
-                file_handles[topic].write(data)
+                # Batch writes for better performance
+                write_buffers[camera_name].append(data)
                 message_counts[camera_name] += 1
+
+                # Write to disk in batches
+                if len(write_buffers[camera_name]) >= BATCH_WRITE_SIZE:
+                    # Use b''.join() for efficient concatenation and single write
+                    file_handles[topic].write(b''.join(write_buffers[camera_name]))
+                    write_buffers[camera_name].clear()
 
                 if message_counts[camera_name] % 100 == 0:
                     print(
                         f"  {camera_name}: {message_counts[camera_name]} frames",
                         end="\r",
                     )
+
+        # Write remaining buffered data
+        for camera_name in camera_topics.values():
+            if camera_name in write_buffers and write_buffers[camera_name]:
+                # Find the topic for this camera
+                topic_for_camera = None
+                for topic, cname in camera_topics.items():
+                    if cname == camera_name:
+                        topic_for_camera = topic
+                        break
+                if topic_for_camera and topic_for_camera in file_handles:
+                    # Use b''.join() for efficient concatenation and single write
+                    file_handles[topic_for_camera].write(b''.join(write_buffers[camera_name]))
+                    write_buffers[camera_name].clear()
 
     except Exception as e:
         print(f"\nError reading messages: {e}")
@@ -425,6 +458,8 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
                 traceback.print_exc()
 
     print("\n\nExtraction complete:")
+    elapsed_time = time.time() - start_time
+    print(f"Total time: {elapsed_time:.2f}s")
     for camera_name in camera_topics.values():
         if camera_name in output_files:
             output_path = output_files[camera_name]
