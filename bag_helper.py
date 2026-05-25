@@ -203,8 +203,8 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
     temp_h264_files = {}  # For YUV conversion
     write_buffers = {}  # Write buffers for batched writes
 
-    # For YUV output, create subdirectories and temp H.264 files
-    if output_format == 'yuv':
+    # For YUV/JPEG output, create subdirectories and temp H.264 files
+    if output_format in ('yuv', 'jpeg'):
         for topic, camera_name in camera_topics.items():
             camera_output_dir = os.path.join(output_dir, camera_name)
             os.makedirs(camera_output_dir, exist_ok=True)
@@ -237,8 +237,8 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
             print(f"Output: {output_file}")
             print(f"Exposure time: {exposure_time_file}")
 
-    if output_format == 'yuv':
-        print("\nExtracting YUV images...")
+    if output_format in ('yuv', 'jpeg'):
+        print(f"\nExtracting {output_format.upper()} images...")
     else:
         print("\nExtracting H.264 data...")
 
@@ -309,7 +309,7 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
         bag.close()
 
     # Save exposure times to CSV files (for H.264/MP4 output)
-    if output_format != 'yuv':
+    if output_format not in ('yuv', 'jpeg'):
         print("\nSaving exposure times...")
         for camera_name in camera_topics.values():
             if camera_name in exposure_time_files and frame_data.get(camera_name):
@@ -457,6 +457,71 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
                 import traceback
                 traceback.print_exc()
 
+    # Convert H.264 to JPEG images with frame sampling
+    if output_format == 'jpeg':
+        print("\n\nConverting H.264 to JPEG images...")
+        for camera_name in camera_topics.values():
+            if camera_name not in temp_h264_files:
+                continue
+
+            h264_file = temp_h264_files[camera_name]
+            output_dir_camera = output_files[camera_name]
+
+            if not os.path.exists(h264_file):
+                print(f"  - {camera_name}: H.264 file not found")
+                continue
+
+            ts_list = timestamps.get(camera_name, [])
+            if not ts_list:
+                print(f"  - {camera_name}: No timestamps found")
+                continue
+
+            sampled_indices = sample_frames_by_hz(ts_list, sample_hz)
+
+            print(f"\n  {camera_name}: Total frames: {len(ts_list)}")
+            print(f"    Sampling at {sample_hz} Hz -> {len(sampled_indices)} frames selected")
+
+            if not sampled_indices:
+                print(f"    No frames to process")
+                continue
+
+            try:
+                if len(ts_list) > 1:
+                    time_diffs = [ts_list[i + 1] - ts_list[i] for i in range(len(ts_list) - 1)]
+                    avg_interval = sum(time_diffs) / len(time_diffs)
+                    actual_fps = 1.0 / avg_interval if avg_interval > 0 else 20.0
+                else:
+                    actual_fps = 20.0
+
+                select_expr = '+'.join([f'eq(n,{idx})' for idx in sampled_indices])
+
+                print(f"    Decoding H.264 to JPEG...")
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-v", "error",
+                    "-r", str(actual_fps),
+                    "-i", h264_file,
+                    "-vf", f"select='{select_expr}'",
+                    "-vsync", "0",
+                    "-q:v", "2",
+                    os.path.join(output_dir_camera, f"{camera_name}_%04d.jpeg")
+                ]
+
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    jpeg_files = [f for f in os.listdir(output_dir_camera) if f.endswith('.jpeg')]
+                    print(f"    ✓ Converted {len(jpeg_files)} frames to JPEG")
+                else:
+                    print(f"    ✗ ffmpeg failed: {result.stderr[:200]}")
+
+                os.remove(h264_file)
+
+            except Exception as e:
+                print(f"    ✗ Error: {e}")
+                import traceback
+                traceback.print_exc()
+
     print("\n\nExtraction complete:")
     elapsed_time = time.time() - start_time
     print(f"Total time: {elapsed_time:.2f}s")
@@ -465,11 +530,12 @@ def extract_h264_from_bag(bag_path, output_dir=None, camera_names=None, output_f
             output_path = output_files[camera_name]
             count = message_counts.get(camera_name, 0)
 
-            if output_format == 'yuv':
-                # For YUV, output_path is a directory
+            if output_format in ('yuv', 'jpeg'):
                 if os.path.exists(output_path):
-                    yuv_files = [f for f in os.listdir(output_path) if f.endswith('.yuv')]
-                    print(f"  - {camera_name}: {len(yuv_files)} NV12 YUV images in {output_path}")
+                    ext = '.yuv' if output_format == 'yuv' else '.jpeg'
+                    label = 'NV12 YUV' if output_format == 'yuv' else 'JPEG'
+                    files = [f for f in os.listdir(output_path) if f.endswith(ext)]
+                    print(f"  - {camera_name}: {len(files)} {label} images in {output_path}")
             else:
                 # For H.264, output_path is a file
                 if os.path.exists(output_path):
@@ -550,6 +616,12 @@ Examples:
   # Extract YUV images every 10 seconds (0.1 fps)
   python bag_helper.py data.bag -o ./output -f yuv --hz 0.1
 
+  # Extract JPEG images at 1 fps (named FrontWide_0001.jpeg, ...)
+  python bag_helper.py data.bag -o ./output -f jpeg
+
+  # Extract JPEG images at 5 fps for specific cameras
+  python bag_helper.py data.bag -o ./output -f jpeg --hz 5 -c FrontWide
+
   # Extract single camera as H.264
   python bag_helper.py data.bag -c camera_left
         '''
@@ -559,12 +631,12 @@ Examples:
     parser.add_argument('-o', '--output-dir', dest='output_dir',
                         help='Output directory (defaults to bag file directory)')
     parser.add_argument('-f', '--format', dest='output_format',
-                        choices=['h264', 'mp4', 'yuv'], default='h264',
-                        help='Output format: h264 (raw stream), mp4 (video file), or yuv (image sequence)')
+                        choices=['h264', 'mp4', 'yuv', 'jpeg'], default='h264',
+                        help='Output format: h264 (raw stream), mp4 (video file), yuv (NV12 image sequence), or jpeg (JPEG image sequence)')
     parser.add_argument('-c', '--cameras', dest='camera_names', nargs='+',
                         help='Camera names to process (space-separated). If not specified, all cameras will be processed.')
     parser.add_argument('--hz', type=float, default=1.0,
-                        help='Sampling rate in Hz for YUV output (frames per second). Default: 1.0 (1 frame per second). Only applies when -f yuv.')
+                        help='Sampling rate in Hz for YUV/JPEG output (frames per second). Default: 1.0 (1 frame per second). Only applies when -f yuv or -f jpeg.')
 
     args = parser.parse_args()
 
